@@ -2,58 +2,54 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 
+	"errors"
+
+	"strconv"
+
 	"golang.org/x/net/html"
 )
 
-func main() {
+func fetchHTML(URL string) (io.ReadCloser, error) {
 
-	//if the caller didn't provide a URL to fetch...
-	if len(os.Args) < 2 {
-		//print the usage and exit with an error
-		fmt.Printf("usage:\n  pagetitle <url>\n")
-		os.Exit(1)
+	resp, err := http.Get(URL) // GET the URL
+
+	if err != nil { // if there is an error, report it and exit
+		return nil, err
 	}
-
-	URL := os.Args[1]
-
-	// fmt.Printf(URL + "\n") // TODO delete ******
-
-	// GET the URL
-	resp, err := http.Get(URL)
-
-	// if there is an error, report it and exit
-	if err != nil {
-		log.Fatalf("error fetching URL: %v\n", err)
-	}
-
-	fmt.Println(resp) // TODO delete *********
-
-	defer resp.Body.Close() // ensure the response body is closed, defer waits to close until main() returns
 
 	// check response status code
 	if resp.StatusCode != http.StatusOK {
-		log.Fatalf("response status code was %d\n", resp.StatusCode)
+
+		fmt.Println(resp.StatusCode)
+		return nil, errors.New("response status code was " + strconv.Itoa(resp.StatusCode))
+
 	}
 
 	// check response content type
 	ctype := resp.Header.Get("Content-Type")    // extract content type from header
 	if !strings.HasPrefix(ctype, "text/html") { // check if ctype does not begin w/ "text/html"
-		log.Fatalf("response content type was %s, not text/html\n", ctype)
+		return nil, errors.New("response content type was " + ctype + ", not text/html")
 	}
 
-	fmt.Println("Response Body: ")
-	fmt.Println(resp.Body)
+	return resp.Body, err // cannot simply return resp (which is a pointer to an http.Response object)
+}
+
+//extractTitle returns the content within the <title> element or an error
+func extractTitle(body io.ReadCloser) (string, error) {
 
 	// create a new tokenizer over the response Body
-	tokenizer := html.NewTokenizer(resp.Body)
+	tokenizer := html.NewTokenizer(body)
 
 	// loop until we find the title element and its content
 	// or encounter an error (including the end of the file)
+
+	var title string
 
 	for { // same as while loop
 		// get the next token type
@@ -77,11 +73,45 @@ func main() {
 				// ensure it is actually a text token
 				if tokenType == html.TextToken {
 					// report the page title and break out of the loop
-					fmt.Println(tokenizer.Token().Data)
+					title = tokenizer.Token().Data
 					break
 				}
 			}
 		}
-
 	}
+
+	return title, nil
+}
+
+//fetchTitle fetches the page title for a URL
+func fetchTitle(URL string) (string, error) {
+	//TODO: fetch the HTML, extract the title, and make sure the body gets closed
+	respBody, err := fetchHTML(URL)
+	if err != nil {
+		return "", err
+	}
+	title, err := extractTitle(respBody)
+
+	defer respBody.Close() // ensure the response body is closed, defer waits to close until main() returns
+	// ******** now waits until enclosing fetchHTML function returns to close resp Body, not main
+
+	return title, err
+}
+
+func main() {
+
+	//if the caller didn't provide a URL to fetch...
+	if len(os.Args) < 2 {
+		//print the usage and exit with an error
+		fmt.Printf("usage:\n  pagetitle <url>\n")
+		os.Exit(1)
+	}
+
+	title, err := fetchTitle(os.Args[1])
+	if err != nil {
+		log.Fatalf("error fetching page title: %v\n", err)
+	}
+
+	fmt.Println(title)
+
 }
